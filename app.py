@@ -4,7 +4,6 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    dump = ""
     return "<h1>hoang</h1>"
 
 if __name__ == '__main__':
