@@ -32,7 +32,7 @@ jobs:
     
   upload-docker-image:
     docker:
-      - image: cimg/base:2021.04
+      - image: circleci/golang:1.15
 
     working_directory: ~/repo
 
