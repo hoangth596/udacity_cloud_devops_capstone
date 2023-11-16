@@ -1,6 +1,5 @@
 Description: >
-  Hoang's Capstone Project
-  Creates the nodegroup for the Amazon EKS Cluster
+  Hoang's Capstone Project - Creates the nodegroup for the Amazon EKS Cluster
 
 Parameters:
   EnvironmentName:

@@ -1,6 +1,5 @@
 Description: >
-  Hoang's Capstone Project
-  Creates two individual hosts to manage the EKS-Cluster
+  Hoang's Capstone Project - Creates two individual hosts to manage the EKS-Cluster
 
 Parameters:
   EnvironmentName:
