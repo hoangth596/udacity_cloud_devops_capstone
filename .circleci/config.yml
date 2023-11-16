@@ -1,0 +1,234 @@
+version: 2.1
+
+jobs:
+  build:
+    docker:
+      - image: python:3.8-bullseye
+
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - v1-dependencies-{{ checksum "requirements.txt" }}
+            # fallback to using the latest cache if no exact match is found
+            - v1-dependencies-
+      # run build
+      - run:
+          name: install dependencies
+          command: |
+            python3 -m venv venv
+            . venv/bin/activate
+            make install
+      # run lint
+      - run:
+          name: run lint
+          command: |
+            . venv/bin/activate
+            make lint
+      - save_cache:
+          paths:
+            - ./venv
+          key: v1-dependencies-{{ checksum "requirements.txt" }}
+    
+  upload-docker-image:
+    docker:
+      - image: cimg/base:2021.04
+
+    working_directory: ~/repo
+
+    steps:
+      - checkout
+      - setup_remote_docker:
+          version: 19.03.13
+      - run:
+          name: Build docker container
+          command: |
+            docker build --tag=$DOCKER_IMAGE_NAME .
+            docker image ls
+      - run:
+          name: Upload Docker Image to Dockerhub
+          command: |
+            echo "Docker Image: $DOCKER_IMAGE_NAME"
+            docker login -u="$DOCKERHUB_USERNAME" -p="$DOCKERHUB_PASSWORD"
+            docker tag $DOCKER_IMAGE_NAME $DOCKERHUB_USERNAME/$DOCKER_IMAGE_NAME:$CIRCLE_WORKFLOW_ID
+            docker push $DOCKERHUB_USERNAME/$DOCKER_IMAGE_NAME:$CIRCLE_WORKFLOW_ID
+
+  deploy-infrastructure:
+    docker:
+      - image: amazon/aws-cli
+    steps:
+      - checkout
+      - run:
+          name: Install dependencies
+          command: yum install -y tar gzip
+      - run:
+          name: Deploy EKS network
+          command: |
+            aws cloudformation deploy \
+              --template-file cloudformation/network.yml \
+              --tags project=${ENVIRONMENT_NAME}-project \
+              --stack-name "${ENVIRONMENT_NAME}-eks-network" \
+              --region ${AWS_DEFAULT_REGION}
+      - run:
+          name: Deploy EKS Cluster
+          command: |
+            aws cloudformation deploy \
+              --template-file cloudformation/cluster.yml \
+              --tags project=${ENVIRONMENT_NAME}-project \
+              --stack-name "${ENVIRONMENT_NAME}-eks-cluster" \
+              --region ${AWS_DEFAULT_REGION} \
+              --capabilities CAPABILITY_NAMED_IAM
+          no_output_timeout: 15m
+      - run:
+          name: Deploy EKS Nodegroup
+          command: |
+            aws cloudformation deploy \
+              --template-file cloudformation/nodegroup.yml \
+              --tags project=${ENVIRONMENT_NAME}-project \
+              --stack-name "${ENVIRONMENT_NAME}-eks-nodegroup" \
+              --region ${AWS_DEFAULT_REGION} \
+              --capabilities CAPABILITY_NAMED_IAM
+      - run:
+          name: Deploy EC2 management instances
+          command: |
+            aws cloudformation deploy \
+              --template-file cloudformation/management.yml \
+              --tags project=${ENVIRONMENT_NAME}-project \
+              --stack-name "${ENVIRONMENT_NAME}-eks-management" \
+              --region ${AWS_DEFAULT_REGION} \
+              --output text >> ~/checkIfDeployed.txt
+            cat ~/checkIfDeployed.txt
+      - run:
+          name: Extract the IPs of the management instances for Ansible
+          command: |
+            echo [management] > ~/inventory.txt
+            aws ec2 describe-instances \
+              --region "${AWS_DEFAULT_REGION}" \
+              --query 'Reservations[*].Instances[*].PublicIpAddress' \
+              --filters "Name=tag:Name,Values=${ENVIRONMENT_NAME}-management*" \
+              --output text >> ~/inventory.txt
+            cat ~/inventory.txt
+      - persist_to_workspace:
+          root: ~/
+          paths:
+            - inventory.txt
+            - checkIfDeployed.txt
+
+  configure-infrastructure:
+    docker:
+      - image: python:3.8-bullseye
+    steps:
+      - checkout
+      - add_ssh_keys:
+          fingerprints:
+            - "57:34:af:5b:1b:8c:10:91:d0:52:66:69:a4:e0:d8:06"
+      - attach_workspace:
+          at: ~/
+      - run:
+          name: Install dependencies
+          command: |
+            python3 -m pip install ansible
+      - run:
+          name: Configure server
+          command: |
+            if grep -q "No changes to deploy" ~/checkIfDeployed.txt
+              then
+                cat ~/inventory.txt
+                echo "Our management instances are already configured."
+              else
+                cat ~/inventory.txt
+                cd ansible
+                ansible-playbook -i ~/inventory.txt configure-server.yml
+              fi
+
+  configure-cluster:
+    docker:
+      - image: python:3.8-bullseye
+    steps:
+      - checkout
+      - add_ssh_keys:
+          fingerprints:
+            - "57:34:af:5b:1b:8c:10:91:d0:52:66:69:a4:e0:d8:06"
+      - attach_workspace:
+          at: ~/
+      - run:
+          name: Install dependencies
+          command: |
+            python3 -m pip install ansible
+      - run:
+          name: Configure clusters
+          command: |
+            if grep -q "No changes to deploy" ~/checkIfDeployed.txt
+              then
+                cat ~/inventory.txt
+                echo "Our management instances are already configured."
+              else
+                cat ~/inventory.txt
+                cd ansible
+                ansible-playbook -i ~/inventory.txt configure-cluster.yml
+              fi
+      - run:
+          name: Wait for LoadBalancer's domain to become reachable
+          command: |
+            if grep -q "No changes to deploy" ~/checkIfDeployed.txt
+              then
+                cat ~/inventory.txt
+                echo "Our management instances are already configured."
+              else
+                cat ~/inventory.txt
+                echo "Wait 60 seconds..."
+                sleep 60
+              fi
+      - run:
+          name: Display the LoadBalancer's DNS name
+          command: |
+            cat ~/inventory.txt
+            cd ansible
+            ansible-playbook -i ~/inventory.txt save-elb-dns.yml
+            cat ~/elb_dns.txt
+      - persist_to_workspace:
+          root: ~/
+          paths:
+            - elb_dns.txt
+    
+  deploy-docker:
+    docker:
+      - image: python:3.8-bullseye
+    steps:
+      - checkout
+      - add_ssh_keys:
+          fingerprints:
+            - "57:34:af:5b:1b:8c:10:91:d0:52:66:69:a4:e0:d8:06"
+      - attach_workspace:
+          at: ~/
+      - run:
+          name: Install dependencies
+          command: |
+            python3 -m pip install ansible
+      - run:
+          name: Deploy newest Docker Image
+          command: |
+            cat ~/inventory.txt
+            cd ansible
+            ansible-playbook -i ~/inventory.txt deploy-app.yml
+          no_output_timeout: 2m
+
+
+workflows:
+  default:
+    jobs:
+      - build
+      - upload-docker-image:
+          requires: [ build ]
+          filters:
+            branches:
+              only: [ main ]
+      - deploy-infrastructure:
+          requires: [ upload-docker-image ]
+      - configure-infrastructure:
+          requires: [ deploy-infrastructure ]
+      - configure-cluster:
+          requires: [ configure-infrastructure ]
+      - deploy-docker:
+          requires: [ configure-cluster ]
+

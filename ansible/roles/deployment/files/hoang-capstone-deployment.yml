@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hoang-capstone-deployment
+  labels:
+    app: hoang-capstone-app
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: hoang-capstone-app
+  template:
+    metadata:
+      labels:
+        app: hoang-capstone-app
+    spec:
+      containers:
+        - name: hoang-capstone-app
+          image: hoangth596/hoang-capstone
+          ports:
+            - containerPort: 80
