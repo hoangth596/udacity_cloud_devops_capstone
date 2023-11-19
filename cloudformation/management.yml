@@ -31,6 +31,7 @@ Resources:
     Type: AWS::EC2::Instance
     Properties:
       InstanceType: t2.micro
+      AvailabilityZone: us-east-1a
       SecurityGroups:
         - Ref: InstanceSecurityGroup
       KeyName: !Ref SSHKeyName
@@ -45,6 +46,7 @@ Resources:
     Type: AWS::EC2::Instance
     Properties:
       InstanceType: t2.micro
+      AvailabilityZone: us-east-1b
       SecurityGroups:
         - Ref: InstanceSecurityGroup
       KeyName: !Ref SSHKeyName
